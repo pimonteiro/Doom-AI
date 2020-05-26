@@ -59,16 +59,24 @@ def create_model(n_actions):
 
 
 class DQNAgent:
-    def __init__(self, n_actions, max_replay_memory, min_replay_memory, minibatch_size, actions, use_latest=False):
+    def __init__(self, n_actions, max_replay_memory, min_replay_memory, minibatch_size, actions, update_target_every, use_latest=False):
         print("Initializing agent...")
+        
+        # Double Q-Learning algorithm
         self.model = create_model(n_actions)
+        self.target_model = create_model(n_actions)
+        
         self.replay_memory = deque(maxlen=max_replay_memory)
         self.min_replay_memory = min_replay_memory
         self.minibatch_size = minibatch_size
         self.actions = actions
         if use_latest:
             self.load_model()
+        self.target_model.set_weights(self.model.get_weights())
         
+        self.update_target_every = update_target_every
+        self.update_target_counter = 0
+
         print("Finished the agent!")
 
 
@@ -88,8 +96,9 @@ class DQNAgent:
         prediction = self.model.predict(states_exp)
         return prediction[0]
 
+
     # Trains network every step during episode
-    def train(self):
+    def train(self, isterminal):
 
         # Start training only if certain number of samples is already saved
         if len(self.replay_memory) < self.min_replay_memory:
@@ -103,7 +112,7 @@ class DQNAgent:
         s2_batch = np.array([d[3] for d in minibatch])
 
         Y = []
-        s2_qs = self.model.predict(s2_batch)
+        s2_qs = self.target_model.predict(s2_batch)
 
         for i in range(0,self.minibatch_size):
             value = 0
@@ -112,11 +121,19 @@ class DQNAgent:
                 value = r_batch[i]
             else:
                 value = r_batch[i] + GAMMA * np.max(s2_qs[i])
-            tmp = np.zeros(len(self.actions))
+            tmp = self.get_qs(minibatch[i][0]) #np.zeros(len(self.actions))
             tmp[minibatch[i][1]] = value
             Y.append(tmp)
         
         history = self.model.fit(s1_batch, np.array(Y), batch_size=self.minibatch_size, epochs=1, verbose=0, shuffle=False)
+        
+        if isterminal:
+            self.update_target_counter += 1
+        if self.update_target_counter > self.update_target_every:
+            self.update_target_counter = 0
+            self.target_model.set_weights(self.model.get_weights())
+            print("========> Updated Target <========")
+
         return history
     
     
@@ -124,9 +141,9 @@ class DQNAgent:
 
     
 class Environment:
-    def __init__(self, gamma, epsilon, epsilon_disc, max_replay_memory, min_replay_memory, minibatch_size, use_trained=False):
+    def __init__(self, gamma, epsilon, epsilon_disc, max_replay_memory, min_replay_memory, minibatch_size, update_target_every, use_trained=False):
         self.game, self.actions = self.configure_game_training()
-        self.agent   = DQNAgent(len(self.actions), max_replay_memory, min_replay_memory, minibatch_size, self.actions, use_latest=use_trained)
+        self.agent   = DQNAgent(len(self.actions), max_replay_memory, min_replay_memory, minibatch_size, self.actions, update_target_every, use_latest=use_trained)
         self.gamma = gamma
         self.epsilon_base = epsilon
         self.epsilon_disc = epsilon_disc
@@ -178,7 +195,7 @@ class Environment:
 
             s_t = np.stack(s_t_deque, axis=0)
             step = 0
-            while (not self.game.is_episode_finished()) or step < max_steps:
+            while (not self.game.is_episode_finished()) and step < max_steps:
                 q_t = self.agent.get_qs(s_t) 
 
                 # Decide if greedy or not
@@ -198,7 +215,7 @@ class Environment:
 
                 # Update current input of states
                 s_t = s_t2
-                history = self.agent.train()
+                history = self.agent.train(isterminal)
                 if history is not None:
                     losses.append(history.history['loss'][0])
                 else:
@@ -268,12 +285,13 @@ class Environment:
 ################################################################################################################################################    
 ################################################################################################################################################    
 
-EPOCHS = 10
+EPOCHS = 5000
 MAX_STEPS = 100
 
-MIN_REPLAY_MEMORY = 1000
-MAX_REPLAY_MEMORY = 50000
-MINI_BATCH_SIZE   = 64
+MIN_REPLAY_MEMORY   = 1000
+MAX_REPLAY_MEMORY   = 50000
+MINI_BATCH_SIZE     = 64
+UPDATE_TARGET_EVERY = 5
 
 GAMMA = 0.99
 EPSILON = 0.9
@@ -282,7 +300,7 @@ EPSILON_DISCOUNT =0.9999
 resolution = (84,84)
     
 prepare_gpu()
-env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, use_trained=True)
+env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=False)
 
 # Train agent
 train_scores = env.train_agent(EPOCHS, MAX_STEPS)   
