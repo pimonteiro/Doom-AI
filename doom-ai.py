@@ -239,7 +239,7 @@ class Environment:
         train_scores = np.array(scores)
         return train_scores
     
-    def play_agent(self, rounds=5):
+    def play_agent(self, rounds=10):
         # Reinitialize the game with window visible
         self.game, self.actions = self.configure_game_training()
         self.game.set_window_visible(True)
@@ -256,13 +256,13 @@ class Environment:
             s_t_deque.append(s1)
             s_t_deque.append(s1)
 
-            s_t = np.stack(s_t_deque, axis=2)
+            s_t = np.stack(s_t_deque, axis=0)
             while not self.game.is_episode_finished():
-                q_t = this.agent.get_qs(s_t) 
+                q_t = self.agent.get_qs(s_t) 
                 a = np.argmax(q_t)
 
                 # Instead of make_action(a, frame_repeat) in order to make the animation smooth
-                self.game.set_action(this.actions[a])
+                self.game.set_action(self.actions[a])
                 for _ in range(12):
                     self.game.advance_action()
 
@@ -272,7 +272,7 @@ class Environment:
                 else:
                     break
                 s_t_deque.append(s2)
-                s_t2 = np.stack(s_t_deque, axis=2)
+                s_t = np.stack(s_t_deque, axis=0)
 
             # Sleep between episodes
             time.sleep(1.0)
@@ -300,11 +300,13 @@ EPSILON_DISCOUNT =0.9999
 resolution = (84,84)
     
 prepare_gpu()
-env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=False)
+env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=True)
 
 # Train agent
-train_scores = env.train_agent(EPOCHS, MAX_STEPS)   
-print("Results: mean: %.1f±%.1f," % (train_scores.mean(), train_scores.std()),
-        "min: %.1f," % train_scores.min(), "max: %.1f," % train_scores.max())  
-    
+#train_scores = env.train_agent(EPOCHS, MAX_STEPS)   
+#print("Results: mean: %.1f±%.1f," % (train_scores.mean(), train_scores.std()),
+#        "min: %.1f," % train_scores.min(), "max: %.1f," % train_scores.max())  
+
+# Play with agent
+env.play_agent()    
 clean_gpu()
