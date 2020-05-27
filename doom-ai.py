@@ -9,7 +9,7 @@ import numpy as np
 from collections import deque
 import itertools as it
 import cv2
-from vizdoom import *   
+from vizdoom import *
 import random
 import time
 import datetime
@@ -25,8 +25,6 @@ def prepare_gpu():
         except RuntimeError as e:
             print(e)
     print("Finsihed starting GPUs")
-
-
 def clean_gpu():
     from numba import cuda
     cuda.select_device(0)
@@ -43,16 +41,19 @@ def preprocess(img):
 
 def create_model(n_actions):
     model = Sequential()
-    model.add(Conv2D(8,6,input_shape=(4, resolution[0], resolution[1]), activation='relu', padding='same', kernel_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None)))
-    model.add(Conv2D(8,6, activation='relu', padding='same', kernel_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None)))
+    model.add(Conv2D(32,kernel_size=(2,2),strides=(1, 1),input_shape=(4, resolution[0], resolution[1]), activation='elu', padding='same'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Conv2D(64,kernel_size=(2,2), strides=(1, 1), activation='elu', padding='same'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Conv2D(128,kernel_size=(2,2), strides=(1, 1), activation='elu', padding='same'))
     model.add(Flatten())
-    model.add(Dense(128, activation='relu', kernel_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None)))
-    model.add(Dense(n_actions, kernel_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None)))
+    model.add(Dense(128, activation='elu'))
+    model.add(Dense(n_actions, activation='elu'))
 
     opt = Adam(lr=0.001)
     model.compile(opt,'mean_squared_error',['accuracy'])
 
-    return model    
+    return model
 
 
 ############################################################ DQN Agent ################################################################################
@@ -61,11 +62,11 @@ def create_model(n_actions):
 class DQNAgent:
     def __init__(self, n_actions, max_replay_memory, min_replay_memory, minibatch_size, actions, update_target_every, use_latest=False):
         print("Initializing agent...")
-        
+
         # Double Q-Learning algorithm
         self.model = create_model(n_actions)
         self.target_model = create_model(n_actions)
-        
+
         self.replay_memory = deque(maxlen=max_replay_memory)
         self.min_replay_memory = min_replay_memory
         self.minibatch_size = minibatch_size
@@ -73,7 +74,7 @@ class DQNAgent:
         if use_latest:
             self.load_model()
         self.target_model.set_weights(self.model.get_weights())
-        
+
         self.update_target_every = update_target_every
         self.update_target_counter = 0
 
@@ -81,10 +82,10 @@ class DQNAgent:
 
 
     def save_model(self):
-        self.model.save("model")
+        self.model.save("model123")
 
     def load_model(self):
-        self.model = K.models.load_model("model")
+        self.model = K.models.load_model("model123")
 
     # (observation space, action, reward, new observation space, done)
     def update_replay_memory(self, transition):
@@ -103,7 +104,7 @@ class DQNAgent:
         # Start training only if certain number of samples is already saved
         if len(self.replay_memory) < self.min_replay_memory:
             return None
-        
+
         minibatch = random.sample(self.replay_memory, self.minibatch_size)
 
         s1_batch = np.array([d[0] for d in minibatch])
@@ -124,9 +125,9 @@ class DQNAgent:
             tmp = self.get_qs(minibatch[i][0]) #np.zeros(len(self.actions))
             tmp[minibatch[i][1]] = value
             Y.append(tmp)
-        
+
         history = self.model.fit(s1_batch, np.array(Y), batch_size=self.minibatch_size, epochs=1, verbose=0, shuffle=False)
-        
+
         if isterminal:
             self.update_target_counter += 1
         if self.update_target_counter > self.update_target_every:
@@ -135,11 +136,11 @@ class DQNAgent:
             print("========> Updated Target <========")
 
         return history
-    
-    
+
+
 ############################################################ Environment ################################################################################
 
-    
+
 class Environment:
     def __init__(self, gamma, epsilon, epsilon_disc, max_replay_memory, min_replay_memory, minibatch_size, update_target_every, use_trained=False):
         self.game, self.actions = self.configure_game_training()
@@ -148,12 +149,12 @@ class Environment:
         self.epsilon_base = epsilon
         self.epsilon_disc = epsilon_disc
         self.epsilon_min = 0.1
-        
+
 
     def configure_game_training(self):
         print("Initializing game environment...")
         game = DoomGame()
-        game.load_config("/home/msi-gtfo/repos/ViZDoom/scenarios/basic.cfg")
+        game.load_config("basic.cfg")
         game.set_window_visible(False)
         #game.set_render_hud(False)
         game.set_screen_format(vizdoom.ScreenFormat.GRAY8)
@@ -173,18 +174,18 @@ class Environment:
         current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         log_dir = 'logs/dqn/' + current_time
         summary_writer = tf.summary.create_file_writer(log_dir)
-        
-        
+
+
         scores = []
         print("---------------Starting training Doom Ai--------------")
         self.game.init()
         epsilon = self.epsilon_base
-        
+
         for epoch in range(epochs):
             losses = []
             print("-> Episode ",epoch)
             self.game.new_episode()
-            
+
             # First state to predict on as a starting point
             s1 = preprocess(self.game.get_state().screen_buffer)
             s_t_deque = deque(maxlen=4)
@@ -196,7 +197,7 @@ class Environment:
             s_t = np.stack(s_t_deque, axis=0)
             step = 0
             while (not self.game.is_episode_finished()) and step < max_steps:
-                q_t = self.agent.get_qs(s_t) 
+                q_t = self.agent.get_qs(s_t)
 
                 # Decide if greedy or not
                 if random.random() <= epsilon:
@@ -204,7 +205,7 @@ class Environment:
                 else:
                     a = np.argmax(q_t)
 
-                # Execute action    
+                # Execute action
                 reward = self.game.make_action(self.actions[a],12) #frame repeat ?
                 isterminal = self.game.is_episode_finished()
                 s2 = preprocess(self.game.get_state().screen_buffer) if not isterminal else np.zeros((resolution))
@@ -232,13 +233,13 @@ class Environment:
                     tf.summary.scalar('episode epsilon', epsilon, step=epoch)
                 scores.append(final_reward)
                 losses = []
-            
+
             if (epoch % 5) == 0:
                 self.agent.save_model()
-            
+
         train_scores = np.array(scores)
         return train_scores
-    
+
     def play_agent(self, rounds=10):
         # Reinitialize the game with window visible
         self.game, self.actions = self.configure_game_training()
@@ -258,7 +259,7 @@ class Environment:
 
             s_t = np.stack(s_t_deque, axis=0)
             while not self.game.is_episode_finished():
-                q_t = self.agent.get_qs(s_t) 
+                q_t = self.agent.get_qs(s_t)
                 a = np.argmax(q_t)
 
                 # Instead of make_action(a, frame_repeat) in order to make the animation smooth
@@ -278,12 +279,12 @@ class Environment:
             time.sleep(1.0)
             score = self.game.get_total_reward()
             print("Round ", r, ": ", score)
-    
-    
-    
-################################################################################################################################################    
-################################################################################################################################################    
-################################################################################################################################################    
+
+
+
+################################################################################################################################################
+################################################################################################################################################
+################################################################################################################################################
 
 EPOCHS = 5000
 MAX_STEPS = 100
@@ -298,15 +299,15 @@ EPSILON = 0.9
 EPSILON_DISCOUNT =0.9999
 
 resolution = (84,84)
-    
-prepare_gpu()
+
+#prepare_gpu()
 env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=True)
 
 # Train agent
-#train_scores = env.train_agent(EPOCHS, MAX_STEPS)   
+#train_scores = env.train_agent(EPOCHS, MAX_STEPS)
 #print("Results: mean: %.1f±%.1f," % (train_scores.mean(), train_scores.std()),
-#        "min: %.1f," % train_scores.min(), "max: %.1f," % train_scores.max())  
+#        "min: %.1f," % train_scores.min(), "max: %.1f," % train_scores.max())
 
 # Play with agent
-env.play_agent()    
+#env.play_agent()
 clean_gpu()
