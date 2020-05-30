@@ -1,6 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Conv2D, MaxPooling2D, Flatten, Dropout
+from tensorflow.keras.layers import Dense, Conv2D, MaxPooling2D, Flatten, Dropout, BatchNormalization
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.initializers import TruncatedNormal
 import tensorflow.keras as K
@@ -41,19 +41,33 @@ def preprocess(img):
 
 def create_model(n_actions):
     model = Sequential()
-    model.add(Conv2D(32,kernel_size=(2,2),strides=(1, 1),input_shape=(4, resolution[0], resolution[1]), activation='elu', padding='same'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Conv2D(64,kernel_size=(2,2), strides=(1, 1), activation='elu', padding='same'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Conv2D(128,kernel_size=(2,2), strides=(1, 1), activation='elu', padding='same'))
+    model.add(Conv2D(32,kernel_size=(8,8),strides=(2, 2),input_shape=(4, resolution[0], resolution[1]), data_format="channels_first", activation='elu', padding='valid', kernel_initializer=tf.keras.initializers.GlorotNormal()))
+    model.add(BatchNormalization(axis=1, epsilon=1e-5))
+    model.add(Conv2D(64,kernel_size=(4,4), strides=(2, 2), activation='elu', padding='valid', kernel_initializer=tf.keras.initializers.GlorotNormal()))
+    model.add(BatchNormalization(axis=1, epsilon=1e-5))
+    model.add(Conv2D(128,kernel_size=(4,4), strides=(1, 1), activation='elu', padding='valid', kernel_initializer=tf.keras.initializers.GlorotNormal()))
+    model.add(BatchNormalization(axis=1, epsilon=1e-5))
     model.add(Flatten())
-    model.add(Dense(128, activation='elu'))
-    model.add(Dense(n_actions, activation='elu'))
+    model.add(Dense(512, activation='elu', kernel_initializer=tf.keras.initializers.GlorotNormal()))
+    model.add(Dense(n_actions, kernel_initializer=tf.keras.initializers.GlorotNormal()))
 
     opt = Adam(lr=0.001)
     model.compile(opt,'mean_squared_error',['accuracy'])
 
     return model
+
+def create_model_base(n_actions):
+    model = Sequential()
+    model.add(Conv2D(8,6,input_shape=(4, resolution[0], resolution[1]), activation='relu', padding='same', kernel_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None)))
+    model.add(Conv2D(8,6, activation='relu', padding='same', kernel_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None)))
+    model.add(Flatten())
+    model.add(Dense(128, activation='relu', kernel_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None)))
+    model.add(Dense(n_actions, kernel_initializer=TruncatedNormal(mean=0.0, stddev=0.05, seed=None)))
+
+    opt = Adam(lr=0.001)
+    model.compile(opt,'mean_squared_error',['accuracy'])
+
+    return model    
 
 
 ############################################################ DQN Agent ################################################################################
@@ -122,7 +136,7 @@ class DQNAgent:
                 value = r_batch[i]
             else:
                 value = r_batch[i] + GAMMA * np.max(s2_qs[i])
-            tmp = self.get_qs(minibatch[i][0]) #np.zeros(len(self.actions))
+            tmp = self.get_qs(minibatch[i][0])
             tmp[minibatch[i][1]] = value
             Y.append(tmp)
 
@@ -159,13 +173,10 @@ class Environment:
         #game.set_render_hud(False)
         game.set_screen_format(vizdoom.ScreenFormat.GRAY8)
 
-        nothing     = [0, 0, 0]
         left        = [1, 0, 0]
-        right       = [0, 1, 0]
+        right       = [0, 1, 0] 
         shoot       = [0, 0, 1]
-        left_shoot  = [1, 0, 1]
-        right_shoot = [0, 1, 1]
-        possible_actions = [nothing, left, right, shoot, left_shoot, right_shoot]
+        possible_actions = [left, right, shoot]
 
         print("Finished game environment!")
         return game, possible_actions
@@ -179,7 +190,7 @@ class Environment:
         scores = []
         print("---------------Starting training Doom Ai--------------")
         self.game.init()
-        epsilon = self.epsilon_base
+        step_decay = 0
 
         for epoch in range(epochs):
             losses = []
@@ -199,14 +210,16 @@ class Environment:
             while (not self.game.is_episode_finished()) and step < max_steps:
                 q_t = self.agent.get_qs(s_t)
 
+                expl_probs = self.epsilon_min + (self.epsilon_base - self.epsilon_min) * np.exp(-self.epsilon_disc * step_decay)
+
                 # Decide if greedy or not
-                if random.random() <= epsilon:
+                if random.random() < expl_probs:
                     a = random.randint(0, len(self.actions) - 1)
                 else:
                     a = np.argmax(q_t)
 
                 # Execute action
-                reward = self.game.make_action(self.actions[a],12) #frame repeat ?
+                reward = self.game.make_action(self.actions[a],12)
                 isterminal = self.game.is_episode_finished()
                 s2 = preprocess(self.game.get_state().screen_buffer) if not isterminal else np.zeros((resolution))
                 s_t_deque.append(s2)
@@ -222,7 +235,7 @@ class Environment:
                 else:
                     losses.append(0)
                 step += 1
-                epsilon = max(self.epsilon_min, epsilon * self.epsilon_disc)
+                step_decay += 1
 
             if self.game.is_episode_finished():
                 final_reward = self.game.get_total_reward()
@@ -230,7 +243,9 @@ class Environment:
                 with summary_writer.as_default():
                     tf.summary.scalar('episode reward', final_reward, step=epoch)
                     tf.summary.scalar('average loss', np.array(losses).mean(), step=epoch)
-                    tf.summary.scalar('episode epsilon', epsilon, step=epoch)
+                    tf.summary.scalar('episode epsilon', expl_probs, step=epoch)
+                    tf.summary.scalar('episode steps', step, step=epoch)
+
                 scores.append(final_reward)
                 losses = []
 
@@ -262,7 +277,6 @@ class Environment:
                 q_t = self.agent.get_qs(s_t)
                 a = np.argmax(q_t)
 
-                # Instead of make_action(a, frame_repeat) in order to make the animation smooth
                 self.game.set_action(self.actions[a])
                 for _ in range(12):
                     self.game.advance_action()
@@ -285,29 +299,59 @@ class Environment:
 ################################################################################################################################################
 ################################################################################################################################################
 ################################################################################################################################################
+import os, pathlib, argparse
 
-EPOCHS = 5000
-MAX_STEPS = 100
+parser = argparse.ArgumentParser(description='Deep Q-Learning to create the Ultimate DOOM Bot')
+parser.add_argument('--mode', default='player', type=str, help='Mode of the program: player or trainer.')
+parser.add_argument('--epochs', default=1000, type=int, help='Number of episodes.')
+parser.add_argument('--max_steps', default=100, type=int, help='Max steps per epoch.')
+parser.add_argument('--min_memory', default=1000, type=int, help='Memory Replay minimum size.')
+parser.add_argument('--max_memory', default=50000, type=int, help='Memory Replay maximum size.')
+parser.add_argument('--batch_size', default=64, type=int, help='Size of the batch to train with.')
+parser.add_argument('--update_every', default=5, type=int, help='Update target network every N epochs.')
+parser.add_argument('--gamma', default=0.95, type=float, help='Rate of discount on future q-value.')
+parser.add_argument('--epsilon', default=1.0, type=float, help='Rate of exploration.')
+parser.add_argument('--epsilon_disc', default=0.9999, type=float, help='Discount for the epsilon.')
+parser.add_argument('--im_width', default=84, type=int, help='Image width to be used on training.')
+parser.add_argument('--im_height', default=84, type=int, help='Image height to be used on training.')
+parser.add_argument('--bot_name', default='BotKiller', type=str, help='Name for the model to be saved.')
+parser.add_argument('--use_latest', default='True', type=str, help='Use checkpoint of the model as a start.')
 
-MIN_REPLAY_MEMORY   = 1000
-MAX_REPLAY_MEMORY   = 50000
-MINI_BATCH_SIZE     = 64
-UPDATE_TARGET_EVERY = 5
 
-GAMMA = 0.99
-EPSILON = 0.9
-EPSILON_DISCOUNT =0.9999
+args = parser.parse_args()
 
-resolution = (84,84)
+EPOCHS = args.epochs
+MAX_STEPS = args.max_steps
 
-#prepare_gpu()
-env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=True)
+MIN_REPLAY_MEMORY   = args.min_memory
+MAX_REPLAY_MEMORY   = args.max_memory
+MINI_BATCH_SIZE     = args.batch_size
+UPDATE_TARGET_EVERY = args.update_every
 
-# Train agent
-#train_scores = env.train_agent(EPOCHS, MAX_STEPS)
-#print("Results: mean: %.1f±%.1f," % (train_scores.mean(), train_scores.std()),
-#        "min: %.1f," % train_scores.min(), "max: %.1f," % train_scores.max())
+GAMMA = args.gamma
+EPSILON = args.epsilon
+EPSILON_DISCOUNT = args.epsilon_disc
 
-# Play with agent
-#env.play_agent()
-clean_gpu()
+resolution = (args.im_width,args.im_height)
+
+MODEL_NAME = args.bot_name
+
+if args.use_latest == 'True':
+    if os.path.isdir(MODEL_NAME):
+        env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=True)
+    else:
+        print("No available checkpoint to start from. Training from scratch...")
+        env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=False)
+else:
+    env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=False)
+prepare_gpu()
+
+if args.mode == 'trainer':
+    # Train agent
+    train_scores = env.train_agent(EPOCHS, MAX_STEPS)   
+    print("Results: mean: %.1f±%.1f," % (train_scores.mean(), train_scores.std()),
+            "min: %.1f," % train_scores.min(), "max: %.1f," % train_scores.max())
+    clean_gpu()
+else:
+    # Play with agent
+    env.play_agent()    
