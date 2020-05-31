@@ -78,9 +78,16 @@ class DQNAgent:
         print("Initializing agent...")
 
         # Double Q-Learning algorithm
-        self.model = create_model_base(n_actions)
-        self.target_model = create_model_base(n_actions)
-
+        if MODEL_NAME == 'BotKiller':
+            self.model = create_model_base(n_actions)
+            self.target_model = create_model_base(n_actions)
+        elif MODEL_NAME == 'model123':
+            self.model = create_model(n_actions)
+            self.target_model = create_model(n_actions)
+        else:
+            self.model = create_model_base(n_actions)
+            self.target_model = create_model_base(n_actions)
+            
         self.replay_memory = deque(maxlen=max_replay_memory)
         self.min_replay_memory = min_replay_memory
         self.minibatch_size = minibatch_size
@@ -170,7 +177,6 @@ class Environment:
         game = DoomGame()
         game.load_config("basic.cfg")
         game.set_window_visible(False)
-        #game.set_render_hud(False)
         game.set_screen_format(vizdoom.ScreenFormat.GRAY8)
 
         left        = [1, 0, 0]
@@ -261,6 +267,7 @@ class Environment:
         self.game.set_window_visible(True)
         self.game.set_mode(vizdoom.Mode.ASYNC_PLAYER)
         self.game.init()
+        scores = []
 
         for r in range(rounds):
             self.game.new_episode()
@@ -282,7 +289,7 @@ class Environment:
                     self.game.advance_action()
 
                 s2 = []
-                if not self.game.is_episode_finished:
+                if not self.game.is_episode_finished():
                     s2 = preprocess(self.game.get_state().screen_buffer)
                 else:
                     break
@@ -293,6 +300,12 @@ class Environment:
             time.sleep(1.0)
             score = self.game.get_total_reward()
             print("Round ", r, ": ", score)
+            scores.append(score)
+        print("----- Results -----")
+        scores = np.array(scores)
+        print("Mean Rewards: ", np.mean(scores))
+        wins = [1 if i > 0 else 0 for i in scores]
+        print("Wins: ", np.sum(wins), "/", rounds)
 
 
 
@@ -342,6 +355,9 @@ if args.use_latest == 'True':
         env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=True)
     else:
         print("No available checkpoint to start from. Training from scratch...")
+        if args.mode == 'player':
+            print("Exiting...")
+            exit()
         env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=False)
 else:
     env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=False)
