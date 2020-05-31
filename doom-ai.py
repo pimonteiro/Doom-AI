@@ -78,8 +78,8 @@ class DQNAgent:
         print("Initializing agent...")
 
         # Double Q-Learning algorithm
-        self.model = create_model(n_actions)
-        self.target_model = create_model(n_actions)
+        self.model = create_model_base(n_actions)
+        self.target_model = create_model_base(n_actions)
 
         self.replay_memory = deque(maxlen=max_replay_memory)
         self.min_replay_memory = min_replay_memory
@@ -96,10 +96,10 @@ class DQNAgent:
 
 
     def save_model(self):
-        self.model.save("model123")
+        self.model.save(MODEL_NAME)
 
     def load_model(self):
-        self.model = K.models.load_model("model123")
+        self.model = K.models.load_model(MODEL_NAME)
 
     # (observation space, action, reward, new observation space, done)
     def update_replay_memory(self, transition):
@@ -183,7 +183,7 @@ class Environment:
 
     def train_agent(self, epochs, max_steps):
         current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        log_dir = 'logs/dqn/' + current_time
+        log_dir = 'logs/dqn/' + MODEL_NAME + "_" + str(epochs) + "_" + current_time
         summary_writer = tf.summary.create_file_writer(log_dir)
 
 
@@ -311,7 +311,7 @@ parser.add_argument('--batch_size', default=64, type=int, help='Size of the batc
 parser.add_argument('--update_every', default=5, type=int, help='Update target network every N epochs.')
 parser.add_argument('--gamma', default=0.95, type=float, help='Rate of discount on future q-value.')
 parser.add_argument('--epsilon', default=1.0, type=float, help='Rate of exploration.')
-parser.add_argument('--epsilon_disc', default=0.9999, type=float, help='Discount for the epsilon.')
+parser.add_argument('--decay_rate', default=0.00005, type=float, help='Discount for the epsilon.')
 parser.add_argument('--im_width', default=84, type=int, help='Image width to be used on training.')
 parser.add_argument('--im_height', default=84, type=int, help='Image height to be used on training.')
 parser.add_argument('--bot_name', default='BotKiller', type=str, help='Name for the model to be saved.')
@@ -330,12 +330,13 @@ UPDATE_TARGET_EVERY = args.update_every
 
 GAMMA = args.gamma
 EPSILON = args.epsilon
-EPSILON_DISCOUNT = args.epsilon_disc
+EPSILON_DISCOUNT = args.decay_rate
 
 resolution = (args.im_width,args.im_height)
 
 MODEL_NAME = args.bot_name
 
+prepare_gpu()
 if args.use_latest == 'True':
     if os.path.isdir(MODEL_NAME):
         env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=True)
@@ -344,7 +345,6 @@ if args.use_latest == 'True':
         env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=False)
 else:
     env = Environment(GAMMA, EPSILON, EPSILON_DISCOUNT, MAX_REPLAY_MEMORY, MIN_REPLAY_MEMORY, MINI_BATCH_SIZE, UPDATE_TARGET_EVERY, use_trained=False)
-prepare_gpu()
 
 if args.mode == 'trainer':
     # Train agent
